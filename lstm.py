@@ -29,7 +29,16 @@ def predict_realtime():
 
                 print("Running prediction...")
                 prediction = model.predict(X_input)
-                print(f"Real-time Prediction → {prediction[0]}")
+
+                # If model returns 5 predictions (one for each feature)
+                if prediction.shape[1] == 5:
+                    results = dict(zip(FEATURES, prediction[0]))
+                    print("Real-time Predictions:")
+                    for pollutant, value in results.items():
+                        print(f"{pollutant}: {value:.2f}")
+                else:
+                    print(f"Unexpected prediction shape: {prediction.shape}")
+
             else:
                 print(f"Waiting for {SEQUENCE_LENGTH} rows to accumulate... (currently {len(df)})")
 
