@@ -3,40 +3,40 @@ import numpy as np
 from tensorflow.keras.models import load_model
 import time
 from sklearn.preprocessing import MinMaxScaler
+from tensorflow import keras
 
 # === Settings ===
 CSV_PATH = 'livedata.csv'
-MODEL_PATH = 'model.h5'
-SEQUENCE_LENGTH = 24  # same as your training sequence length
+SEQUENCE_LENGTH = 24
 FEATURES = ['PM2.5', 'PM10', 'NO2', 'CO', 'O3']
 
-# === Load the model ===
-model = load_model(MODEL_PATH)
+# Load model
+model = keras.models.load_model('model.h5', compile=False)
 
-# === Normalizer (should be same used during training) ===
+# Normalizer
 scaler = MinMaxScaler()
 
 def predict_realtime():
     while True:
         try:
             df = pd.read_csv(CSV_PATH)
+            print(f"Loaded {len(df)} rows.")
 
-            # Make sure we have enough rows
             if len(df) >= SEQUENCE_LENGTH:
                 latest_data = df[FEATURES].tail(SEQUENCE_LENGTH)
-
-                # Normalize input based on the current window (better if same scaler used during training)
                 scaled = scaler.fit_transform(latest_data)
+                X_input = np.expand_dims(scaled, axis=0)
 
-                X_input = np.expand_dims(scaled, axis=0)  # shape: (1, sequence_len, num_features)
-
+                print("Running prediction...")
                 prediction = model.predict(X_input)
                 print(f"Real-time Prediction → {prediction[0]}")
-
             else:
-                print(f"Waiting for {SEQUENCE_LENGTH} rows to accumulate...")
+                print(f"Waiting for {SEQUENCE_LENGTH} rows to accumulate... (currently {len(df)})")
 
         except Exception as e:
             print(f"Error: {e}")
 
-        time.sleep(10)  # every 10 seconds
+        time.sleep(10)
+
+# 🔥 START REALTIME PREDICTION
+predict_realtime()
