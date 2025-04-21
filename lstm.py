@@ -10,7 +10,7 @@ import requests
 CSV_PATH = 'livedata.csv'
 SEQUENCE_LENGTH = 24
 FEATURES = ['PM2.5', 'PM10', 'NO2', 'CO', 'O3']
-THINGSPEAK_API_KEY = 'YOUR_THINGSPEAK_WRITE_API_KEY'
+THINGSPEAK_API_KEY = '3K3DQZMFW585P1U0'
 THINGSPEAK_URL = 'https://api.thingspeak.com/update.json'
 
 # Load model
