@@ -8,7 +8,7 @@ import threading
 import requests
 
 # === ThingSpeak Setup ===
-THINGSPEAK_API_KEY = 'YOUR_WRITE_API_KEY'  # Replace this
+THINGSPEAK_API_KEY = 'FVCCFUD9VK2GDSA3'  # Replace this
 THINGSPEAK_URL = 'https://api.thingspeak.com/update'
 
 # === Global Variables ===
