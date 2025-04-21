@@ -4,11 +4,14 @@ from tensorflow.keras.models import load_model
 import time
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow import keras
+import requests
 
 # === Settings ===
 CSV_PATH = 'livedata.csv'
 SEQUENCE_LENGTH = 24
 FEATURES = ['PM2.5', 'PM10', 'NO2', 'CO', 'O3']
+THINGSPEAK_API_KEY = 'YOUR_THINGSPEAK_WRITE_API_KEY'
+THINGSPEAK_URL = 'https://api.thingspeak.com/update.json'
 
 # Load model
 model = keras.models.load_model('model.h5', compile=False)
@@ -46,6 +49,25 @@ def calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi):
     """
     return max(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
 
+def send_aqi_to_thingspeak(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi, total_aqi):
+    """
+    Send AQI values to ThingSpeak channel.
+    """
+    params = {
+        'api_key': THINGSPEAK_API_KEY,
+        'field1': pm25_aqi,
+        'field2': pm10_aqi,
+        'field3': co_aqi,
+        'field4': no2_aqi,
+        'field5': o3_aqi,
+        'field6': total_aqi
+    }
+    response = requests.post(THINGSPEAK_URL, params=params)
+    if response.status_code == 200:
+        print("Data sent to ThingSpeak successfully.")
+    else:
+        print(f"Failed to send data to ThingSpeak. Status Code: {response.status_code}")
+
 def predict_realtime():
     while True:
         try:
@@ -80,6 +102,9 @@ def predict_realtime():
 
                 print(f"PM2.5 AQI: {pm25_aqi}, PM10 AQI: {pm10_aqi}, CO AQI: {co_aqi}, NO2 AQI: {no2_aqi}, O3 AQI: {o3_aqi}")
                 print(f"Total AQI: {total_aqi}")
+
+                # Send AQI data to ThingSpeak
+                send_aqi_to_thingspeak(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi, total_aqi)
 
             else:
                 print(f"Waiting for {SEQUENCE_LENGTH} rows to accumulate... (currently {len(df)})")
