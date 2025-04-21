@@ -1,118 +1,162 @@
-import pandas as pd
-import numpy as np
-from tensorflow.keras.models import load_model
+import serial
 import time
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow import keras
+import csv
+from datetime import datetime
+import os
+import glob
+import threading
 import requests
 
-# === Settings ===
-CSV_PATH = 'livedata.csv'
-SEQUENCE_LENGTH = 24
-FEATURES = ['PM2.5', 'PM10', 'NO2', 'CO', 'O3']
-THINGSPEAK_API_KEY = '3K3DQZMFW585P1U0'
-THINGSPEAK_URL = 'https://api.thingspeak.com/update.json'
+# === ThingSpeak Setup ===
+THINGSPEAK_API_KEY = '3K3DQZMFW585P1U0'  # Replace with your API key
+THINGSPEAK_URL = 'https://api.thingspeak.com/update'
 
-# Load model
-model = keras.models.load_model('model.h5', compile=False)
+# === Global Variables ===
+latest_pm25 = None
+latest_pm10 = None
+latest_co = None
+latest_no2 = None
+latest_o3 = None
 
-# Normalizer
-scaler = MinMaxScaler()
+# === CSV Setup ===
+csv_file = "livedata.csv"
+MAX_ROWS = 1440  # 1 day of data at 1-minute intervals
 
-# AQI Calculation function
-def calculate_aqi(concentration, pollutant):
-    """
-    Calculate AQI based on concentration for each pollutant.
-    """
-    if pollutant == "PM2.5":
-        breakpoints = [(0, 12, 50), (12.1, 35.4, 100), (35.5, 55.4, 150), (55.5, 150.4, 200), (150.5, 250.4, 300), (250.5, 500.4, 400)]
-    elif pollutant == "PM10":
-        breakpoints = [(0, 54, 50), (55, 154, 100), (155, 254, 150), (255, 354, 200), (355, 424, 300), (425, 604, 400)]
-    elif pollutant == "CO":
-        breakpoints = [(0, 4.4, 50), (4.5, 9.4, 100), (9.5, 12.4, 150), (12.5, 15.4, 200), (15.5, 30.4, 300), (30.5, 50, 400)]
-    elif pollutant == "NO2":
-        breakpoints = [(0, 53, 50), (54, 100, 100), (101, 360, 150), (361, 649, 200), (650, 1249, 300), (1250, 2049, 400)]
-    elif pollutant == "O3":
-        breakpoints = [(0, 54, 50), (55, 70, 100), (71, 85, 150), (86, 105, 200), (106, 200, 300), (201, 604, 400)]
-    else:
-        return 0  # For unrecognized pollutants
+if not os.path.exists(csv_file) or os.stat(csv_file).st_size == 0:
+    with open(csv_file, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Timestamp", "PM2.5", "PM10", "NO2", "CO", "O3", "Total_AQI"])
 
-    # Find the appropriate AQI value based on the concentration
-    for low, high, aqi in breakpoints:
-        if low <= concentration <= high:
-            return aqi
-    return 0  # If concentration is out of range, return 0
-
-def calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi):
-    """
-    Calculate the total AQI as the maximum AQI from all pollutants.
-    """
-    return max(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
-
-def send_aqi_to_thingspeak(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi, total_aqi):
-    """
-    Send AQI values to ThingSpeak channel.
-    """
-    params = {
-        'api_key': THINGSPEAK_API_KEY,
-        'field1': pm25_aqi,
-        'field2': pm10_aqi,
-        'field3': co_aqi,
-        'field4': no2_aqi,
-        'field5': o3_aqi,
-        'field6': total_aqi
+# === AQI Calculation ===
+def calculate_individual_aqi(pollutant, value):
+    breakpoints = {
+        "PM2.5":   [(0, 30, 0, 50), (31, 60, 51, 100), (61, 90, 101, 200), (91, 120, 201, 300), (121, 250, 301, 400)],
+        "PM10":    [(0, 50, 0, 50), (51, 100, 51, 100), (101, 250, 101, 200), (251, 350, 201, 300), (351, 430, 301, 400)],
+        "NO2":     [(0, 40, 0, 50), (41, 80, 51, 100), (81, 180, 101, 200), (181, 280, 201, 300)],
+        "CO":      [(0, 1.0, 0, 50), (1.1, 2.0, 51, 100), (2.1, 10, 101, 200), (10.1, 17, 201, 300)],
+        "O3":      [(0, 50, 0, 50), (51, 100, 51, 100), (101, 168, 101, 200), (169, 208, 201, 300)],
     }
-    response = requests.post(THINGSPEAK_URL, params=params)
-    if response.status_code == 200:
-        print("Data sent to ThingSpeak successfully.")
-    else:
-        print(f"Failed to send data to ThingSpeak. Status Code: {response.status_code}")
 
-def predict_realtime():
+    for bp in breakpoints.get(pollutant, []):
+        Clow, Chigh, Ilow, Ihigh = bp
+        if Clow <= value <= Chigh:
+            aqi = ((Ihigh - Ilow) / (Chigh - Clow)) * (value - Clow) + Ilow
+            return round(aqi)
+    return 0  # if out of range
+
+# === Send to ThingSpeak ===
+def send_to_thingspeak(pm25, pm10, no2, co, o3, total_aqi):
+    try:
+        payload = {
+            'api_key': THINGSPEAK_API_KEY,
+            'field1': pm25,
+            'field2': pm10,
+            'field3': no2,
+            'field4': co,
+            'field5': o3,
+            'field6': total_aqi
+        }
+        response = requests.get(THINGSPEAK_URL, params=payload)
+        if response.status_code == 200:
+            print("Data sent to ThingSpeak.")
+        else:
+            print("ThingSpeak Error:", response.text)
+    except Exception as e:
+        print("ThingSpeak Exception:", e)
+
+# === Read PM2.5 and PM10 from SDS011 ===
+def read_pm_sensor():
+    global latest_pm25, latest_pm10
+    try:
+        ser_pm = serial.Serial('/dev/ttyUSB0', baudrate=9600, timeout=2)
+        while True:
+            data = ser_pm.read(10)
+            if len(data) == 10 and data[0] == 0xAA and data[1] == 0xC0 and data[9] == 0xAB:
+                checksum = sum(data[2:8]) % 256
+                if checksum == data[8]:
+                    latest_pm25 = (data[2] + data[3] * 256) / 10.0
+                    latest_pm10 = (data[4] + data[5] * 256) / 10.0
+            time.sleep(2)
+    except Exception as e:
+        print("Error in PM sensor thread:", e)
+
+# === Read CO, NO2, O3 from Arduino ===
+def read_gas_sensor():
+    global latest_co, latest_no2, latest_o3
+    try:
+        ports = glob.glob('/dev/ttyACM0') + glob.glob('/dev/ttyACM*')
+        if len(ports) == 0:
+            print("No Arduino device found.")
+            return
+        ser_gas = serial.Serial(ports[0], 9600)
+
+        while True:
+            if ser_gas.in_waiting > 0:
+                line = ser_gas.readline().decode('utf-8').strip()
+                parts = line.split(',')
+                if len(parts) == 3:
+                    try:
+                        latest_co = float(parts[0])
+                        latest_no2 = float(parts[1])
+                        latest_o3 = float(parts[2])
+                    except ValueError:
+                        print("Invalid float values:", parts)
+            time.sleep(1)
+    except Exception as e:
+        print("Error in Gas sensor thread:", e)
+
+# === Combine, Save, and Send Data ===
+def write_combined_csv(interval=15, max_rows=MAX_ROWS):
     while True:
-        try:
-            df = pd.read_csv(CSV_PATH)
-            print(f"Loaded {len(df)} rows.")
+        if all(val is not None for val in [latest_pm25, latest_pm10, latest_no2, latest_co, latest_o3]):
+            # Calculate individual AQIs
+            aqi_pm25 = calculate_individual_aqi("PM2.5", latest_pm25)
+            aqi_pm10 = calculate_individual_aqi("PM10", latest_pm10)
+            aqi_no2  = calculate_individual_aqi("NO2", latest_no2)
+            aqi_co   = calculate_individual_aqi("CO", latest_co)
+            aqi_o3   = calculate_individual_aqi("O3", latest_o3)
 
-            if len(df) >= SEQUENCE_LENGTH:
-                latest_data = df[FEATURES].tail(SEQUENCE_LENGTH)
-                scaled = scaler.fit_transform(latest_data)
-                X_input = np.expand_dims(scaled, axis=0)
+            # Total AQI is the maximum
+            total_aqi = max(aqi_pm25, aqi_pm10, aqi_no2, aqi_co, aqi_o3)
 
-                print("Running prediction...")
-                prediction = model.predict(X_input)
-                print(f"Real-time Prediction → {prediction[0]}")
+            timestamp = datetime.now().strftime("%d-%m-%Y %H:%M")
+            row = [timestamp, latest_pm25, latest_pm10, latest_no2, latest_co, latest_o3, total_aqi]
 
-                # Assuming the model's prediction corresponds to the same pollutants in the same order
-                pm25_pred = prediction[0][0]  # Predicted value for PM2.5
-                pm10_pred = prediction[0][1]  # Predicted value for PM10
-                co_pred = prediction[0][2]    # Predicted value for CO
-                no2_pred = prediction[0][3]   # Predicted value for NO2
-                o3_pred = prediction[0][4]    # Predicted value for O3
+            try:
+                # Read existing rows
+                with open(csv_file, 'r') as f:
+                    lines = f.readlines()
 
-                # Calculate AQI for each pollutant
-                pm25_aqi = calculate_aqi(pm25_pred, "PM2.5")
-                pm10_aqi = calculate_aqi(pm10_pred, "PM10")
-                co_aqi = calculate_aqi(co_pred, "CO")
-                no2_aqi = calculate_aqi(no2_pred, "NO2")
-                o3_aqi = calculate_aqi(o3_pred, "O3")
+                if len(lines) > 1:
+                    data_lines = lines[1:]
+                else:
+                    data_lines = []
 
-                # Calculate the total AQI
-                total_aqi = calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
+                data_lines.append(','.join(map(str, row)) + '\n')
 
-                print(f"PM2.5 AQI: {pm25_aqi}, PM10 AQI: {pm10_aqi}, CO AQI: {co_aqi}, NO2 AQI: {no2_aqi}, O3 AQI: {o3_aqi}")
-                print(f"Total AQI: {total_aqi}")
+                # Keep only the latest max_rows
+                trimmed_data = data_lines[-max_rows:]
 
-                # Send AQI data to ThingSpeak
-                send_aqi_to_thingspeak(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi, total_aqi)
+                # Write updated data
+                with open(csv_file, 'w', newline='') as f:
+                    f.write(lines[0])  # header
+                    f.writelines(trimmed_data)
 
-            else:
-                print(f"Waiting for {SEQUENCE_LENGTH} rows to accumulate... (currently {len(df)})")
+                # Send to ThingSpeak
+                send_to_thingspeak(latest_pm25, latest_pm10, latest_no2, latest_co, latest_o3, total_aqi)
 
-        except Exception as e:
-            print(f"Error: {e}")
+                print("Saved & sent:", row)
+            except Exception as e:
+                print("Error writing CSV:", e)
+        else:
+            print("Waiting for all sensors to initialize...")
+        time.sleep(interval)
 
-        time.sleep(10)
+# === Start Threads ===
+threading.Thread(target=read_pm_sensor, daemon=True).start()
+threading.Thread(target=read_gas_sensor, daemon=True).start()
+threading.Thread(target=write_combined_csv, daemon=True).start()
 
-# 🔥 START REALTIME PREDICTION
-predict_realtime()
+# === Keep Main Thread Alive ===
+while True:
+    time.sleep(60)
