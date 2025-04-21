@@ -8,7 +8,7 @@ import threading
 import requests
 
 # === ThingSpeak Setup ===
-THINGSPEAK_API_KEY = 'FVCCFUD9VK2GDSA3'  # Replace this
+THINGSPEAK_API_KEY = '3K3DQZMFW585P1U0'  # Replace this
 THINGSPEAK_URL = 'https://api.thingspeak.com/update'
 
 # === Global Variables ===
@@ -114,7 +114,7 @@ def write_combined_csv(interval=10, max_rows=MAX_ROWS):
                     f.write(lines[0])  # header
                     f.writelines(trimmed_data)
 
-                # Send to ThingSpeak
+                # Send to ThingSpeak every 10 seconds
                 send_to_thingspeak(latest_pm25, latest_pm10, latest_no2, latest_co, latest_o3)
 
                 print("Saved:", row)
@@ -132,4 +132,3 @@ threading.Thread(target=write_combined_csv, daemon=True).start()
 # === Keep Main Thread Alive ===
 while True:
     time.sleep(60)
-
