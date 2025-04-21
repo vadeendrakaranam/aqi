@@ -10,7 +10,9 @@ THINGSPEAK_URL = f'https://api.thingspeak.com/channels/{THINGSPEAK_CHANNEL_ID}/f
 
 # AQI Calculation for various pollutants
 def calculate_aqi(concentration, pollutant):
-    # Define the breakpoints for AQI categories
+    """
+    Calculate AQI based on concentration for each pollutant.
+    """
     if pollutant == "PM2.5":
         breakpoints = [(0, 12, 50), (12.1, 35.4, 100), (35.5, 55.4, 150), (55.5, 150.4, 200), (150.5, 250.4, 300), (250.5, 500.4, 400)]
     elif pollutant == "PM10":
@@ -31,6 +33,9 @@ def calculate_aqi(concentration, pollutant):
     return 0  # If concentration is out of range, return 0
 
 def calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi):
+    """
+    Calculate the total AQI as the maximum AQI from all pollutants.
+    """
     return max(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
 
 @app.route('/')
@@ -43,11 +48,11 @@ def data():
         # Fetch the latest data from ThingSpeak API
         response = requests.get(THINGSPEAK_URL, params={
             'api_key': THINGSPEAK_API_KEY,
-            'results': 1  # Get the latest data
+            'results': 1  # Get the latest data entry
         })
         data = response.json()
         feeds = data.get('feeds', [])
-        
+
         # If there's data, calculate AQI for each pollutant
         if feeds:
             latest_feed = feeds[0]
@@ -67,8 +72,13 @@ def data():
             # Calculate Total AQI (taking max of individual AQIs)
             total_aqi = calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
 
-            # Return the AQI results
+            # Return the AQI results as JSON
             result = {
+                "pm25": pm25,
+                "pm10": pm10,
+                "co": co,
+                "no2": no2,
+                "o3": o3,
                 "pm25_aqi": pm25_aqi,
                 "pm10_aqi": pm10_aqi,
                 "co_aqi": co_aqi,
@@ -88,12 +98,13 @@ if __name__ == '__main__':
 
 
 
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Air Quality Data</title>
+    <title>Air Quality Index</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f0f0; }
         button { padding: 10px 20px; font-size: 16px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
@@ -110,14 +121,14 @@ if __name__ == '__main__':
     <button onclick="fetchData()">Get Latest AQI Data</button>
 
     <div class="result-container">
-        <h2>Individual Pollutant AQI</h2>
+        <h2>Pollutant AQI</h2>
         <table id="aqi-table">
-            <tr><th>Pollutant</th><th>AQI</th></tr>
-            <tr><td>PM2.5</td><td id="pm25-aqi">-</td></tr>
-            <tr><td>PM10</td><td id="pm10-aqi">-</td></tr>
-            <tr><td>CO</td><td id="co-aqi">-</td></tr>
-            <tr><td>NO₂</td><td id="no2-aqi">-</td></tr>
-            <tr><td>O₃</td><td id="o3-aqi">-</td></tr>
+            <tr><th>Pollutant</th><th>Concentration</th><th>AQI</th></tr>
+            <tr><td>PM2.5</td><td id="pm25-concentration">-</td><td id="pm25-aqi">-</td></tr>
+            <tr><td>PM10</td><td id="pm10-concentration">-</td><td id="pm10-aqi">-</td></tr>
+            <tr><td>CO</td><td id="co-concentration">-</td><td id="co-aqi">-</td></tr>
+            <tr><td>NO₂</td><td id="no2-concentration">-</td><td id="no2-aqi">-</td></tr>
+            <tr><td>O₃</td><td id="o3-concentration">-</td><td id="o3-aqi">-</td></tr>
         </table>
 
         <h2>Total AQI</h2>
@@ -135,13 +146,25 @@ if __name__ == '__main__':
                     return;
                 }
 
-                // Update AQI values in the table
+                // Update pollutant concentrations and AQIs in the table
+                document.getElementById('pm25-concentration').textContent = data.pm25;
                 document.getElementById('pm25-aqi').textContent = data.pm25_aqi;
+
+                document.getElementById('pm10-concentration').textContent = data.pm10;
                 document.getElementById('pm10-aqi').textContent = data.pm10_aqi;
+
+                document.getElementById('co-concentration').textContent = data.co;
                 document.getElementById('co-aqi').textContent = data.co_aqi;
+
+                document.getElementById('no2-concentration').textContent = data.no2;
                 document.getElementById('no2-aqi').textContent = data.no2_aqi;
+
+                document.getElementById('o3-concentration').textContent = data.o3;
                 document.getElementById('o3-aqi').textContent = data.o3_aqi;
+
+                // Update total AQI
                 document.getElementById('total-aqi').textContent = data.total_aqi;
+
             } catch (error) {
                 alert('Error fetching data: ' + error);
             }
@@ -150,4 +173,5 @@ if __name__ == '__main__':
 
 </body>
 </html>
+
 
