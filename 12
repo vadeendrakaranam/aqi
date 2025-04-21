@@ -1,68 +1,37 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>ThingSpeak Live Data</title>
-    <style>
-        body { font-family: Arial; margin: 20px; background-color: #f5f5f5; }
-        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-        th, td { border: 1px solid #ccc; padding: 10px; text-align: center; }
-        th { background-color: #4CAF50; color: white; }
-    </style>
-</head>
-<body>
-    <h2>ThingSpeak Live Data Viewer</h2>
-    <table id="data-table">
-        <thead>
-            <tr>
-                <th>Time</th>
-                <th>PM2.5</th>
-                <th>PM10</th>
-                <th>NO₂</th>
-                <th>CO</th>
-                <th>O₃</th>
-            </tr>
-        </thead>
-        <tbody></tbody>
-    </table>
-
-    <script>
-        async function loadData() {
-            const response = await fetch('/data');
-            const data = await response.json();
-            const tbody = document.querySelector('#data-table tbody');
-            tbody.innerHTML = '';
-
-            data.reverse().forEach(entry => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td>${new Date(entry.created_at).toLocaleString()}</td>
-                    <td>${entry.field1 || '-'}</td>
-                    <td>${entry.field2 || '-'}</td>
-                    <td>${entry.field3 || '-'}</td>
-                    <td>${entry.field4 || '-'}</td>
-                    <td>${entry.field5 || '-'}</td>
-                `;
-                tbody.appendChild(row);
-            });
-        }
-
-        loadData();
-        setInterval(loadData, 15000); // Refresh every 15 sec
-    </script>
-</body>
-</html>
-
-
-
-
 from flask import Flask, render_template, jsonify
 import requests
 
 app = Flask(__name__)
 
-THINGSPEAK_CHANNEL_ID = '2926775'
-THINGSPEAK_API_KEY = 'DDOUTA4ZTSFQI9TM'
+# ThingSpeak Configuration
+THINGSPEAK_CHANNEL_ID = '2926775'  # Replace with your ThingSpeak Channel ID
+THINGSPEAK_API_KEY = 'DDOUTA4ZTSFQI9TM'  # Replace with your ThingSpeak API Key
 THINGSPEAK_URL = f'https://api.thingspeak.com/channels/{THINGSPEAK_CHANNEL_ID}/feeds.json'
+
+# AQI Calculation for various pollutants
+def calculate_aqi(concentration, pollutant):
+    # Define the breakpoints for AQI categories
+    if pollutant == "PM2.5":
+        breakpoints = [(0, 12, 50), (12.1, 35.4, 100), (35.5, 55.4, 150), (55.5, 150.4, 200), (150.5, 250.4, 300), (250.5, 500.4, 400)]
+    elif pollutant == "PM10":
+        breakpoints = [(0, 54, 50), (55, 154, 100), (155, 254, 150), (255, 354, 200), (355, 424, 300), (425, 604, 400)]
+    elif pollutant == "CO":
+        breakpoints = [(0, 4.4, 50), (4.5, 9.4, 100), (9.5, 12.4, 150), (12.5, 15.4, 200), (15.5, 30.4, 300), (30.5, 50, 400)]
+    elif pollutant == "NO2":
+        breakpoints = [(0, 53, 50), (54, 100, 100), (101, 360, 150), (361, 649, 200), (650, 1249, 300), (1250, 2049, 400)]
+    elif pollutant == "O3":
+        breakpoints = [(0, 54, 50), (55, 70, 100), (71, 85, 150), (86, 105, 200), (106, 200, 300), (201, 604, 400)]
+    else:
+        return 0  # For unrecognized pollutants
+
+    # Find the appropriate AQI value based on the concentration
+    for low, high, aqi in breakpoints:
+        if low <= concentration <= high:
+            return aqi
+    return 0  # If concentration is out of range, return 0
+
+def calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi):
+    return max(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
 
 @app.route('/')
 def index():
@@ -71,15 +40,114 @@ def index():
 @app.route('/data')
 def data():
     try:
+        # Fetch the latest data from ThingSpeak API
         response = requests.get(THINGSPEAK_URL, params={
             'api_key': THINGSPEAK_API_KEY,
-            'results': 10
+            'results': 1  # Get the latest data
         })
         data = response.json()
         feeds = data.get('feeds', [])
-        return jsonify(feeds)
+        
+        # If there's data, calculate AQI for each pollutant
+        if feeds:
+            latest_feed = feeds[0]
+            pm25 = float(latest_feed['field1']) if latest_feed['field1'] else 0
+            pm10 = float(latest_feed['field2']) if latest_feed['field2'] else 0
+            co = float(latest_feed['field4']) if latest_feed['field4'] else 0
+            no2 = float(latest_feed['field3']) if latest_feed['field3'] else 0
+            o3 = float(latest_feed['field5']) if latest_feed['field5'] else 0
+            
+            # Calculate individual AQIs
+            pm25_aqi = calculate_aqi(pm25, "PM2.5")
+            pm10_aqi = calculate_aqi(pm10, "PM10")
+            co_aqi = calculate_aqi(co, "CO")
+            no2_aqi = calculate_aqi(no2, "NO2")
+            o3_aqi = calculate_aqi(o3, "O3")
+
+            # Calculate Total AQI (taking max of individual AQIs)
+            total_aqi = calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
+
+            # Return the AQI results
+            result = {
+                "pm25_aqi": pm25_aqi,
+                "pm10_aqi": pm10_aqi,
+                "co_aqi": co_aqi,
+                "no2_aqi": no2_aqi,
+                "o3_aqi": o3_aqi,
+                "total_aqi": total_aqi
+            }
+            return jsonify(result)
+        else:
+            return jsonify({'error': 'No data available from ThingSpeak.'})
     except Exception as e:
         return jsonify({'error': str(e)})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
+
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Air Quality Data</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f0f0; }
+        button { padding: 10px 20px; font-size: 16px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
+        button:hover { background-color: #45a049; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+        th { background-color: #4CAF50; color: white; }
+        .result-container { margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+    <h1>Air Quality Index (AQI) Data</h1>
+    <button onclick="fetchData()">Get Latest AQI Data</button>
+
+    <div class="result-container">
+        <h2>Individual Pollutant AQI</h2>
+        <table id="aqi-table">
+            <tr><th>Pollutant</th><th>AQI</th></tr>
+            <tr><td>PM2.5</td><td id="pm25-aqi">-</td></tr>
+            <tr><td>PM10</td><td id="pm10-aqi">-</td></tr>
+            <tr><td>CO</td><td id="co-aqi">-</td></tr>
+            <tr><td>NO₂</td><td id="no2-aqi">-</td></tr>
+            <tr><td>O₃</td><td id="o3-aqi">-</td></tr>
+        </table>
+
+        <h2>Total AQI</h2>
+        <p id="total-aqi">-</p>
+    </div>
+
+    <script>
+        async function fetchData() {
+            try {
+                const response = await fetch('/data');
+                const data = await response.json();
+
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+
+                // Update AQI values in the table
+                document.getElementById('pm25-aqi').textContent = data.pm25_aqi;
+                document.getElementById('pm10-aqi').textContent = data.pm10_aqi;
+                document.getElementById('co-aqi').textContent = data.co_aqi;
+                document.getElementById('no2-aqi').textContent = data.no2_aqi;
+                document.getElementById('o3-aqi').textContent = data.o3_aqi;
+                document.getElementById('total-aqi').textContent = data.total_aqi;
+            } catch (error) {
+                alert('Error fetching data: ' + error);
+            }
+        }
+    </script>
+
+</body>
+</html>
+
