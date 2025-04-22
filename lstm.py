@@ -31,7 +31,7 @@ except Exception as e:
 # Normalizer (fit once on the initial data)
 scaler = MinMaxScaler()
 
-# AQI Calculation function
+# AQI Calculation function for individual pollutants
 def calculate_aqi(concentration, pollutant):
     try:
         if pollutant == "PM2.5":
@@ -56,19 +56,17 @@ def calculate_aqi(concentration, pollutant):
         print(f"❌ Error calculating AQI for {pollutant}: {e}")
         return 0
 
-def calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi):
-    return max(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
-
-def send_aqi_to_thingspeak(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi, total_aqi):
+# Function to send AQI data to ThingSpeak
+def send_aqi_to_thingspeak(sensor_values, overall_aqi):
     try:
         params = {
             'api_key': THINGSPEAK_API_KEY,
-            'field1': pm25_aqi,
-            'field2': pm10_aqi,
-            'field3': co_aqi,
-            'field4': no2_aqi,
-            'field5': o3_aqi,
-            'field6': total_aqi
+            'field1': sensor_values['PM2.5'],
+            'field2': sensor_values['PM10'],
+            'field3': sensor_values['NO2'],
+            'field4': sensor_values['CO'],
+            'field5': sensor_values['O3'],
+            'field6': overall_aqi  # Only the overall AQI
         }
         response = requests.post(THINGSPEAK_URL, params=params)
         response.raise_for_status()  # Raise an exception for bad HTTP status codes
@@ -98,40 +96,22 @@ def predict_realtime():
                 X_input = np.expand_dims(scaled, axis=0)
 
                 print("🔮 Running prediction...")
+
+                # Get the individual AQI values for each pollutant (calculation is done for internal use, not sent)
+                for pollutant in FEATURES:
+                    calculate_aqi(latest_data.iloc[-1][pollutant], pollutant)
+
+                # Assuming model output is a single value (overall AQI)
                 prediction = model.predict(X_input)
 
-                # Check prediction shape before unpacking
-                if prediction.shape[1] != 5:
-                    raise ValueError(f"Expected 5 output values from the model, but got {prediction.shape[1]}.")
-                pred = prediction[0]
+                if prediction.shape != (1, 1):
+                    raise ValueError(f"Expected a single value for overall AQI, but got {prediction.shape}.")
+                overall_aqi = prediction[0][0]
 
-                pm25_pred, pm10_pred, co_pred, no2_pred, o3_pred = pred
+                print(f"\n🌍 Overall AQI: {overall_aqi}")
 
-                pm25_aqi = calculate_aqi(pm25_pred, "PM2.5")
-                pm10_aqi = calculate_aqi(pm10_pred, "PM10")
-                co_aqi   = calculate_aqi(co_pred, "CO")
-                no2_aqi  = calculate_aqi(no2_pred, "NO2")
-                o3_aqi   = calculate_aqi(o3_pred, "O3")
-
-                total_aqi = calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
-
-                print("🧪 Predicted Pollutant Concentrations:")
-                print(f"  PM2.5: {pm25_pred:.2f} µg/m³")
-                print(f"  PM10 : {pm10_pred:.2f} µg/m³")
-                print(f"  CO   : {co_pred:.2f} ppm")
-                print(f"  NO2  : {no2_pred:.2f} ppb")
-                print(f"  O3   : {o3_pred:.2f} ppb")
-
-                print("\n🌫️ AQI Values:")
-                print(f"  PM2.5 AQI: {pm25_aqi}")
-                print(f"  PM10  AQI: {pm10_aqi}")
-                print(f"  CO    AQI: {co_aqi}")
-                print(f"  NO2   AQI: {no2_aqi}")
-                print(f"  O3    AQI: {o3_aqi}")
-
-                print(f"\n🌍 TOTAL AQI: {total_aqi}")
-
-                send_aqi_to_thingspeak(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi, total_aqi)
+                # Send the sensor values and overall AQI to ThingSpeak
+                send_aqi_to_thingspeak(latest_data.iloc[-1], overall_aqi)
 
             else:
                 print(f"⏳ Waiting for {SEQUENCE_LENGTH} rows... (currently {len(df)})")
