@@ -1,87 +1,91 @@
-import serial
-import time
-import csv
-from datetime import datetime
-import os
-import glob
-import threading
+from flask import Flask, render_template, request
+import pandas as pd
 
-# Global variables to store latest sensor values
-latest_pm25 = None
-latest_pm10 = None
-latest_co = None
-latest_no2 = None
-latest_o3 = None
+app = Flask(__name__)
 
-# File name
-csv_file = "livedata.csv"
+# AQI Calculation Logic
+def calculate_cpcb_aqi(concentration, breakpoints):
+    for (bp_lo, bp_hi, i_lo, i_hi) in breakpoints:
+        if bp_lo <= concentration <= bp_hi:
+            return round(((i_hi - i_lo) / (bp_hi - bp_lo)) * (concentration - bp_lo) + i_lo)
+    return None
 
-# Create CSV if not exist
-if not os.path.exists(csv_file) or os.stat(csv_file).st_size == 0:
-    with open(csv_file, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(["Timestamp", "PM2.5", "PM10", "NO2", "CO", "O3"])
+def classify_aqi_cpcb(aqi):
+    if aqi <= 50:
+        return 'Good'
+    elif aqi <= 100:
+        return 'Satisfactory'
+    elif aqi <= 200:
+        return 'Moderate'
+    elif aqi <= 300:
+        return 'Poor'
+    elif aqi <= 400:
+        return 'Very Poor'
+    else:
+        return 'Severe'
 
-# === Thread to read SDS011 PM sensor on ttyUSB0 ===
-def read_pm_sensor():
-    global latest_pm25, latest_pm10
-    try:
-        ser_pm = serial.Serial('/dev/ttyUSB0', baudrate=9600, timeout=2)
-        while True:
-            data = ser_pm.read(10)
-            if len(data) == 10 and data[0] == 0xAA and data[1] == 0xC0 and data[9] == 0xAB:
-                checksum = sum(data[2:8]) % 256
-                if checksum == data[8]:
-                    latest_pm25 = (data[2] + data[3] * 256) / 10.0
-                    latest_pm10 = (data[4] + data[5] * 256) / 10.0
-            time.sleep(2)
-    except Exception as e:
-        print("Error in PM sensor thread:", e)
+def get_cpcb_aqi(pm25=None, pm10=None, no2=None, co=None, o3=None):
+    aqi_results = {}
 
-# === Thread to read Arduino data (CO, NO2, O3) ===
-def read_gas_sensor():
-    global latest_co, latest_no2, latest_o3
-    try:
-        ports = glob.glob('/dev/ttyACM0') + glob.glob('/dev/ttyACM*')
-        if len(ports) == 0:
-            print("No Arduino device found.")
-            return
-        ser_gas = serial.Serial(ports[0], 9600)
+    # CPCB breakpoints
+    pm25_bp = [(0, 30, 0, 50), (31, 60, 51, 100), (61, 90, 101, 200),
+               (91, 120, 201, 300), (121, 250, 301, 400), (251, 500, 401, 500)]
+    pm10_bp = [(0, 50, 0, 50), (51, 100, 51, 100), (101, 250, 101, 200),
+               (251, 350, 201, 300), (351, 430, 301, 400), (431, 1000, 401, 500)]
+    no2_bp = [(0, 40, 0, 50), (41, 80, 51, 100), (81, 180, 101, 200),
+              (181, 280, 201, 300), (281, 400, 301, 400), (401, 1000, 401, 500)]
+    co_bp = [(0, 1, 0, 50), (1.1, 2, 51, 100), (2.1, 10, 101, 200),
+             (10.1, 17, 201, 300), (17.1, 34, 301, 400), (34.1, 50, 401, 500)]
+    o3_bp = [(0, 50, 0, 50), (51, 100, 51, 100), (101, 168, 101, 200),
+             (169, 208, 201, 300), (209, 748, 301, 400), (749, 1000, 401, 500)]
 
-        while True:
-            if ser_gas.in_waiting > 0:
-                line = ser_gas.readline().decode('utf-8').strip()
-                parts = line.split(',')
-                if len(parts) == 3:
-                    try:
-                        latest_co = float(parts[0])
-                        latest_no2 = float(parts[1])
-                        latest_o3 = float(parts[2])
-                    except ValueError:
-                        print("Invalid float values:", parts)
-            time.sleep(1)
-    except Exception as e:
-        print("Error in Gas sensor thread:", e)
+    if pm25 is not None:
+        aqi_results['PM2.5'] = calculate_cpcb_aqi(pm25, pm25_bp)
+    if pm10 is not None:
+        aqi_results['PM10'] = calculate_cpcb_aqi(pm10, pm10_bp)
+    if no2 is not None:
+        aqi_results['NO2'] = calculate_cpcb_aqi(no2, no2_bp)
+    if co is not None:
+        aqi_results['CO'] = calculate_cpcb_aqi(co, co_bp)
+    if o3 is not None:
+        aqi_results['O3'] = calculate_cpcb_aqi(o3, o3_bp)
 
-# === Writer Thread: combines both sensor data every N seconds ===
-def write_combined_csv(interval=10):
-    while True:
-        if all(val is not None for val in [latest_pm25, latest_pm10, latest_no2, latest_co, latest_o3]):
-            timestamp = datetime.now().strftime("%d-%m-%Y %H:%M")
-            row = [timestamp, latest_pm25, latest_pm10, latest_no2, latest_co, latest_o3]
-            with open(csv_file, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow(row)
-            print("Saved:", row)
+    if not aqi_results:
+        return None, None, None, {}
+
+    max_pollutant = max(aqi_results, key=aqi_results.get)
+    max_aqi = aqi_results[max_pollutant]
+    category = classify_aqi_cpcb(max_aqi)
+
+    return max_aqi, max_pollutant, category, aqi_results
+
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    aqi_data = {}
+    if request.method == "POST":
+        df = pd.read_csv("livedata.csv")
+
+        if len(df) < 24:
+            aqi_data["error"] = "Not enough data to calculate AQI. Need at least 24 rows."
         else:
-            print("Waiting for all sensors to initialize...")
-        time.sleep(interval)
+            latest_24 = df.tail(24)
+            pm25 = latest_24["PM2.5"].mean()
+            pm10 = latest_24["PM10"].mean()
+            no2 = latest_24["NO2"].mean()
+            co = latest_24["CO"].mean()
+            o3 = latest_24["O3"].mean()
 
-# === Start all threads ===
-threading.Thread(target=read_pm_sensor, daemon=True).start()
-threading.Thread(target=read_gas_sensor, daemon=True).start()
-threading.Thread(target=write_combined_csv, daemon=True).start()
+            overall_aqi, main_pollutant, category, all_aqis = get_cpcb_aqi(pm25, pm10, no2, co, o3)
 
-# Keep main thread alive
-while True:
-    time.sleep(60)
+            aqi_data = {
+                "overall_aqi": overall_aqi,
+                "category": category,
+                "main_pollutant": main_pollutant,
+                "all_aqis": all_aqis
+            }
+
+    return render_template("index.html", data=aqi_data)
+
+if __name__ == "__main__":
+    app.run(debug=True)
