@@ -10,7 +10,7 @@ import os
 
 # === Settings ===
 CSV_PATH = 'livedata.csv'
-SEQUENCE_LENGTH = 24
+SEQUENCE_LENGTH = 10  # Change to 10 for testing
 FEATURES = ['PM2.5', 'PM10', 'NO2', 'CO', 'O3']
 LABEL_COLUMN = 'AQI'
 THINGSPEAK_API_KEY = '3K3DQZMFW585P1U0'
@@ -41,9 +41,11 @@ def calculate_aqi(concentration, pollutant):
             "NO2": [(0, 53, 50), (54, 100, 100), (101, 360, 150), (361, 649, 200), (650, 1249, 300), (1250, 2049, 400)],
             "O3": [(0, 54, 50), (55, 70, 100), (71, 85, 150), (86, 105, 200), (106, 200, 300), (201, 604, 400)]
         }
-        for low, high, aqi in breakpoints.get(pollutant, []):
-            if low <= concentration <= high:
-                return aqi
+        bp = breakpoints.get(pollutant, [])
+        for c_low, c_high, i_low, i_high in bp:
+            if c_low <= concentration <= c_high:
+                aqi = ((i_high - i_low) / (c_high - c_low)) * (concentration - c_low) + i_low
+                return round(aqi)
         return 0
     except Exception as e:
         logging.error(f"Error in calculate_aqi for {pollutant}: {e}")
