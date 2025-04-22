@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, session
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
@@ -111,20 +111,23 @@ def index():
                 "all_aqis": all_aqis
             }
 
-            # --- Send Email Notification ---
-            subject = f"AQI Report: {category} ({overall_aqi})"
-            body = (
-                f"AQI Report:\n\n"
-                f"Overall AQI: {overall_aqi}\n"
-                f"Main Pollutant: {main_pollutant}\n"
-                f"Category: {category}\n\n"
-                f"Individual AQIs:\n" +
-                "\n".join([f"{k}: {v}" for k, v in all_aqis.items()])
-            )
-            send_email(subject, body)
+            # --- Send Email Notification (if not already sent) ---
+            if "email_sent" not in session:
+                subject = f"AQI Report: {category} ({overall_aqi})"
+                body = (
+                    f"AQI Report:\n\n"
+                    f"Overall AQI: {overall_aqi}\n"
+                    f"Main Pollutant: {main_pollutant}\n"
+                    f"Category: {category}\n\n"
+                    f"Individual AQIs:\n" +
+                    "\n".join([f"{k}: {v}" for k, v in all_aqis.items()])
+                )
+                send_email(subject, body)
+                session["email_sent"] = True  # Set email_sent to True to prevent duplicate sending
 
     return render_template("index.html", data=aqi_data)
 
 
 if __name__ == "__main__":
+    app.secret_key = 'your_secret_key'  # Set a secret key for session management
     app.run(debug=True)
