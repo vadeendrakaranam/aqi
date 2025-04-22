@@ -1,9 +1,35 @@
 from flask import Flask, render_template, request
 import pandas as pd
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__)
 
-# AQI Calculation Logic
+# --- Email Configuration ---
+SENDER_EMAIL = "karanam.vadeendra123456@gmail.com"
+SENDER_PASSWORD = "xrpc cyhe hwdn fxzp"  # Use app password for Gmail
+RECEIVER_EMAIL = "126158026@sastra.ac.in"
+
+def send_email(subject, body):
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = RECEIVER_EMAIL
+        msg['Subject'] = subject
+
+        msg.attach(MIMEText(body, 'plain'))
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, msg.as_string())
+        server.quit()
+        print("Email sent successfully.")
+    except Exception as e:
+        print(f"Error sending email: {e}")
+
+# --- AQI Logic ---
 def calculate_cpcb_aqi(concentration, breakpoints):
     for (bp_lo, bp_hi, i_lo, i_hi) in breakpoints:
         if bp_lo <= concentration <= bp_hi:
@@ -85,7 +111,20 @@ def index():
                 "all_aqis": all_aqis
             }
 
+            # --- Send Email Notification ---
+            subject = f"AQI Report: {category} ({overall_aqi})"
+            body = (
+                f"AQI Report:\n\n"
+                f"Overall AQI: {overall_aqi}\n"
+                f"Main Pollutant: {main_pollutant}\n"
+                f"Category: {category}\n\n"
+                f"Individual AQIs:\n" +
+                "\n".join([f"{k}: {v}" for k, v in all_aqis.items()])
+            )
+            send_email(subject, body)
+
     return render_template("index.html", data=aqi_data)
+
 
 if __name__ == "__main__":
     app.run(debug=True)
