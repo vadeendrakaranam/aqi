@@ -75,9 +75,13 @@ def predict_realtime():
         try:
             if not os.path.exists(CSV_PATH):
                 raise FileNotFoundError(f"The CSV file at {CSV_PATH} does not exist.")
-
+            
+            # Read CSV and ensure there are no missing values in the necessary columns
             df = pd.read_csv(CSV_PATH)
             print(f"\n📥 Loaded {len(df)} rows.")
+
+            # Drop rows with NaN values in the required features
+            df.dropna(subset=FEATURES, inplace=True)
 
             if len(df) >= SEQUENCE_LENGTH:
                 latest_data = df[FEATURES].tail(SEQUENCE_LENGTH)
@@ -86,12 +90,16 @@ def predict_realtime():
                     scaler.fit(latest_data)
                     first_run = False
 
+                # Ensure that the scaling operation is valid (i.e., no NaN values after scaling)
                 scaled = scaler.transform(latest_data)
+                if np.isnan(scaled).any():
+                    raise ValueError("Scaled data contains NaN values.")
+
                 X_input = np.expand_dims(scaled, axis=0)
 
                 print("🔮 Running prediction...")
 
-                # AQI calculations
+                # AQI calculations for each pollutant
                 for pollutant in FEATURES:
                     calculate_aqi(latest_data.iloc[-1][pollutant], pollutant)
 
@@ -104,7 +112,7 @@ def predict_realtime():
                 print(f"\n🌍 Overall AQI: {overall_aqi}")
                 send_aqi_to_thingspeak(latest_data.iloc[-1], overall_aqi)
 
-                # ✅ Try updating weights if actual AQI label is present
+                # Try updating model weights if actual AQI label is present
                 if LABEL_COLUMN in df.columns:
                     train_data = df.dropna(subset=FEATURES + [LABEL_COLUMN]).tail(50)
                     if not train_data.empty:
