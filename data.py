@@ -17,6 +17,7 @@ latest_o3 = None
 csv_file = "livedata.csv"
 MAX_ROWS = 1440  # 1 day of data at 1-minute intervals
 
+# Initialize the CSV file if it doesn't exist or is empty
 if not os.path.exists(csv_file) or os.stat(csv_file).st_size == 0:
     with open(csv_file, mode='w', newline='') as file:
         writer = csv.writer(file)
@@ -85,7 +86,7 @@ def write_combined_csv(interval=15, max_rows=MAX_ROWS):
                 # Keep only the latest max_rows
                 trimmed_data = data_lines[-max_rows:]
 
-                # Write updated data
+                # Write updated data with proper cleaning of columns
                 with open(csv_file, 'w', newline='') as f:
                     f.write(lines[0])  # header
                     f.writelines(trimmed_data)
