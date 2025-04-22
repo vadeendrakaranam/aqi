@@ -12,15 +12,15 @@ import os
 CSV_PATH = 'livedata.csv'
 SEQUENCE_LENGTH = 24
 FEATURES = ['PM2.5', 'PM10', 'NO2', 'CO', 'O3']
-LABEL_COLUMN = 'AQI'  # NEW: assumed label column for training
+LABEL_COLUMN = 'AQI'
 THINGSPEAK_API_KEY = '3K3DQZMFW585P1U0'
 THINGSPEAK_URL = 'https://api.thingspeak.com/update.json'
 
-# Logging setup for better error tracking
+# Logging setup
 logging.basicConfig(filename="error_log.txt", level=logging.ERROR, 
                     format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Load model with error handling
+# Load model
 try:
     model = keras.models.load_model('model.h5', compile=False)
     print("✅ Model loaded successfully.")
@@ -29,7 +29,6 @@ except Exception as e:
     print(f"❌ Error loading model: {e}")
     exit()
 
-# Normalizer
 scaler = MinMaxScaler()
 
 # AQI Calculation
@@ -51,6 +50,7 @@ def calculate_aqi(concentration, pollutant):
         print(f"❌ Error calculating AQI for {pollutant}: {e}")
         return 0
 
+# Send to ThingSpeak
 def send_aqi_to_thingspeak(sensor_values, overall_aqi):
     try:
         params = {
@@ -69,6 +69,7 @@ def send_aqi_to_thingspeak(sensor_values, overall_aqi):
         logging.error(f"Error sending data to ThingSpeak: {e}")
         print(f"❌ Failed to send data to ThingSpeak. Error: {e}")
 
+# Realtime loop
 def predict_realtime():
     first_run = True
     while True:
@@ -78,8 +79,6 @@ def predict_realtime():
             
             df = pd.read_csv(CSV_PATH, usecols=FEATURES + ['Timestamp'])
 
-            # Exclude the 'Timestamp' column
-            print(df.columns)
             df.columns = df.columns.str.strip()
             df = df.drop(columns=['Timestamp'])
 
@@ -97,12 +96,15 @@ def predict_realtime():
 
                 print("🔮 Running prediction...")
 
-                # AQI calculations
                 aqi_values = {}
                 for pollutant in FEATURES:
-                    aqi_values[pollutant] = calculate_aqi(latest_data.iloc[-1][pollutant], pollutant)
+                    value = latest_data.iloc[-1][pollutant]
+                    aqi = calculate_aqi(value, pollutant)
+                    aqi_values[pollutant] = aqi
 
-                print(f"AQI values: {aqi_values}")
+                print("\n📊 Individual AQI Values:")
+                for key, val in aqi_values.items():
+                    print(f"   • {key} AQI: {val}")
 
                 prediction = model.predict(X_input)
 
@@ -110,12 +112,10 @@ def predict_realtime():
                     raise ValueError(f"Expected a single value for overall AQI, but got {prediction.shape}.")
                 overall_aqi = prediction[0][0]
 
-                print(f"\n🌍 Overall AQI: {overall_aqi}")
+                print(f"\n🌍 Predicted Overall AQI: {overall_aqi:.2f}")
 
-                # Send AQI to ThingSpeak
                 send_aqi_to_thingspeak(latest_data.iloc[-1], overall_aqi)
 
-                # Update model if actual AQI label is present
                 if LABEL_COLUMN in df.columns:
                     train_data = df.dropna(subset=FEATURES + [LABEL_COLUMN]).tail(50)
                     if not train_data.empty:
@@ -133,7 +133,6 @@ def predict_realtime():
                         print("⚠️ Skipping update: Not enough clean data to train.")
                 else:
                     print("ℹ️ Skipping training: No AQI label column in CSV.")
-
             else:
                 print(f"⏳ Waiting for {SEQUENCE_LENGTH} rows... (currently {len(df)})")
 
@@ -143,5 +142,5 @@ def predict_realtime():
 
         time.sleep(10)
 
-# 🔁 START PREDICTION LOOP
+# 🔁 START
 predict_realtime()
