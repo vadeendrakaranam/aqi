@@ -34,7 +34,6 @@ def calculate_aqi(concentration, pollutant):
     else:
         return 0
 
-    # Find the appropriate AQI value based on the concentration
     for low, high, aqi in breakpoints:
         if low <= concentration <= high:
             return aqi
@@ -55,62 +54,66 @@ def send_aqi_to_thingspeak(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi, total_aq
     }
     response = requests.post(THINGSPEAK_URL, params=params)
     if response.status_code == 200:
-        print("Data sent to ThingSpeak successfully.")
+        print("✅ Data sent to ThingSpeak successfully.")
     else:
-        print(f"Failed to send data to ThingSpeak. Status Code: {response.status_code}")
+        print(f"❌ Failed to send data to ThingSpeak. Status Code: {response.status_code}")
 
 def predict_realtime():
     first_run = True
     while True:
         try:
             df = pd.read_csv(CSV_PATH)
-            print(f"Loaded {len(df)} rows.")
+            print(f"\n📥 Loaded {len(df)} rows.")
 
             if len(df) >= SEQUENCE_LENGTH:
                 latest_data = df[FEATURES].tail(SEQUENCE_LENGTH)
 
                 if first_run:
-                    # Fit the scaler once on the initial batch of data
                     scaler.fit(latest_data)
                     first_run = False
 
-                scaled = scaler.transform(latest_data)  # Use transform for future data
+                scaled = scaler.transform(latest_data)
                 X_input = np.expand_dims(scaled, axis=0)
 
-                print("Running prediction...")
+                print("🔮 Running prediction...")
                 prediction = model.predict(X_input)
-                print(f"Real-time Prediction → {prediction[0]}")
+                pred = prediction[0]
 
-                # Extract predictions
-                pm25_pred = prediction[0][0]
-                pm10_pred = prediction[0][1]
-                co_pred = prediction[0][2]
-                no2_pred = prediction[0][3]
-                o3_pred = prediction[0][4]
+                pm25_pred, pm10_pred, co_pred, no2_pred, o3_pred = pred
 
-                # Calculate AQI values for each pollutant
                 pm25_aqi = calculate_aqi(pm25_pred, "PM2.5")
                 pm10_aqi = calculate_aqi(pm10_pred, "PM10")
-                co_aqi = calculate_aqi(co_pred, "CO")
-                no2_aqi = calculate_aqi(no2_pred, "NO2")
-                o3_aqi = calculate_aqi(o3_pred, "O3")
+                co_aqi   = calculate_aqi(co_pred, "CO")
+                no2_aqi  = calculate_aqi(no2_pred, "NO2")
+                o3_aqi   = calculate_aqi(o3_pred, "O3")
 
-                # Calculate the total AQI
                 total_aqi = calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
 
-                print(f"PM2.5 AQI: {pm25_aqi}, PM10 AQI: {pm10_aqi}, CO AQI: {co_aqi}, NO2 AQI: {no2_aqi}, O3 AQI: {o3_aqi}")
-                print(f"Total AQI: {total_aqi}")
+                print("🧪 Predicted Pollutant Concentrations:")
+                print(f"  PM2.5: {pm25_pred:.2f} µg/m³")
+                print(f"  PM10 : {pm10_pred:.2f} µg/m³")
+                print(f"  CO   : {co_pred:.2f} ppm")
+                print(f"  NO2  : {no2_pred:.2f} ppb")
+                print(f"  O3   : {o3_pred:.2f} ppb")
 
-                # Send AQI data to ThingSpeak
+                print("\n🌫️ AQI Values:")
+                print(f"  PM2.5 AQI: {pm25_aqi}")
+                print(f"  PM10  AQI: {pm10_aqi}")
+                print(f"  CO    AQI: {co_aqi}")
+                print(f"  NO2   AQI: {no2_aqi}")
+                print(f"  O3    AQI: {o3_aqi}")
+
+                print(f"\n🌍 TOTAL AQI: {total_aqi}")
+
                 send_aqi_to_thingspeak(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi, total_aqi)
 
             else:
-                print(f"Waiting for {SEQUENCE_LENGTH} rows to accumulate... (currently {len(df)})")
+                print(f"⏳ Waiting for {SEQUENCE_LENGTH} rows... (currently {len(df)})")
 
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"❌ Error: {e}")
 
         time.sleep(10)
 
-# 🔥 START REALTIME PREDICTION
+# 🔁 START PREDICTION LOOP
 predict_realtime()
