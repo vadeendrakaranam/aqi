@@ -118,6 +118,7 @@ def predict_realtime():
 
                 send_aqi_to_thingspeak(latest_data.iloc[-1], overall_aqi)
 
+                # Model Update Step (Training with new data)
                 if LABEL_COLUMN in df.columns:
                     train_data = df.dropna(subset=FEATURES + [LABEL_COLUMN]).tail(50)
                     if not train_data.empty:
