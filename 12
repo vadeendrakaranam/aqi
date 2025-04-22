@@ -1,156 +1,49 @@
-from flask import Flask, render_template, jsonify
-import requests
-
-app = Flask(__name__)
-
-# === ThingSpeak Configuration ===
-THINGSPEAK_CHANNEL_ID = '2926775'  # Replace with your ThingSpeak Channel ID
-THINGSPEAK_API_KEY = 'YOUR_THINGSPEAK_READ_API_KEY'  # Replace with your ThingSpeak API Key
-THINGSPEAK_URL = f'https://api.thingspeak.com/channels/{THINGSPEAK_CHANNEL_ID}/feeds.json'
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/data')
-def data():
-    try:
-        # Fetch the latest 1 feed from ThingSpeak
-        response = requests.get(THINGSPEAK_URL, params={
-            'api_key': THINGSPEAK_API_KEY,
-            'results': 1
-        })
-        data = response.json()
-
-        # Extract AQI values from the latest feed
-        feeds = data.get('feeds', [])
-        if feeds:
-            latest_feed = feeds[0]
-            pm25_aqi = latest_feed.get('field1', 'N/A')
-            pm10_aqi = latest_feed.get('field2', 'N/A')
-            co_aqi = latest_feed.get('field3', 'N/A')
-            no2_aqi = latest_feed.get('field4', 'N/A')
-            o3_aqi = latest_feed.get('field5', 'N/A')
-            total_aqi = latest_feed.get('field6', 'N/A')
-
-            # Return the AQI data to be displayed
-            return jsonify({
-                'pm25_aqi': pm25_aqi,
-                'pm10_aqi': pm10_aqi,
-                'co_aqi': co_aqi,
-                'no2_aqi': no2_aqi,
-                'o3_aqi': o3_aqi,
-                'total_aqi': total_aqi
-            })
-        else:
-            return jsonify({'error': 'No data available'})
-
-    except Exception as e:
-        return jsonify({'error': str(e)})
-
-if __name__ == '__main__':
-    app.run(debug=True)
-
-
-
-
-
-
-
-
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AQI Dashboard</title>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <title>Live AQI Dashboard</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        h1 {
-            color: #333;
-        }
-        .aqi-container {
-            background-color: #fff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-        .aqi-item {
-            margin: 10px 0;
-            font-size: 18px;
-            color: #333;
-        }
-        .aqi-item span {
-            font-weight: bold;
-        }
-        #fetch-data-btn {
-            padding: 10px 20px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        #fetch-data-btn:hover {
-            background-color: #45a049;
-        }
+        body { font-family: Arial, sans-serif; background: #f0f4f8; padding: 20px; }
+        h1 { color: #1a73e8; }
+        table { border-collapse: collapse; width: 50%; margin-top: 20px; }
+        th, td { padding: 10px; text-align: left; border: 1px solid #ccc; }
+        .btn { padding: 10px 20px; background-color: #1a73e8; color: white; border: none; cursor: pointer; }
+        .btn:hover { background-color: #0f5db3; }
+        .box { margin-top: 20px; }
     </style>
 </head>
 <body>
-    <h1>AQI Dashboard</h1>
-    
-    <!-- Button to fetch AQI data -->
-    <button id="fetch-data-btn">Fetch AQI Data</button>
 
-    <div class="aqi-container" style="display: none;" id="aqi-container">
-        <div class="aqi-item">
-            <span>PM2.5 AQI:</span> <span id="pm25-aqi">Loading...</span>
-        </div>
-        <div class="aqi-item">
-            <span>PM10 AQI:</span> <span id="pm10-aqi">Loading...</span>
-        </div>
-        <div class="aqi-item">
-            <span>CO AQI:</span> <span id="co-aqi">Loading...</span>
-        </div>
-        <div class="aqi-item">
-            <span>NO2 AQI:</span> <span id="no2-aqi">Loading...</span>
-        </div>
-        <div class="aqi-item">
-            <span>O3 AQI:</span> <span id="o3-aqi">Loading...</span>
-        </div>
-        <div class="aqi-item">
-            <span>Total AQI:</span> <span id="total-aqi">Loading...</span>
-        </div>
+    <h1>Live AQI Dashboard</h1>
+    <form method="POST">
+        <button class="btn" type="submit">Get AQI</button>
+    </form>
+
+    {% if data.error %}
+        <p style="color: red;">{{ data.error }}</p>
+    {% elif data.overall_aqi %}
+    <div class="box">
+        <h3>Overall AQI: {{ data.overall_aqi }} ({{ data.category }})</h3>
+        <p><strong>Main Pollutant:</strong> {{ data.main_pollutant }}</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Pollutant</th>
+                    <th>AQI</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pollutant, aqi in data.all_aqis.items() %}
+                <tr>
+                    <td>{{ pollutant }}</td>
+                    <td>{{ aqi }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
+    {% endif %}
 
-    <script>
-        $(document).ready(function(){
-            // When button is clicked, fetch AQI data
-            $('#fetch-data-btn').click(function(){
-                $.get('/data', function(data) {
-                    if (data.error) {
-                        alert(data.error);
-                    } else {
-                        // Show the AQI container
-                        $('#aqi-container').show();
-
-                        // Update AQI values on the page
-                        $('#pm25-aqi').text(data.pm25_aqi);
-                        $('#pm10-aqi').text(data.pm10_aqi);
-                        $('#co-aqi').text(data.co_aqi);
-                        $('#no2-aqi').text(data.no2_aqi);
-                        $('#o3-aqi').text(data.o3_aqi);
-                        $('#total-aqi').text(data.total_aqi);
-                    }
-                });
-            });
-        });
-    </script>
 </body>
 </html>
