@@ -12,6 +12,7 @@ import os
 CSV_PATH = 'livedata.csv'
 SEQUENCE_LENGTH = 24
 FEATURES = ['PM2.5', 'PM10', 'NO2', 'CO', 'O3']
+LABEL_COLUMN = 'AQI'  # NEW: assumed label column for training
 THINGSPEAK_API_KEY = '3K3DQZMFW585P1U0'
 THINGSPEAK_URL = 'https://api.thingspeak.com/update.json'
 
@@ -28,35 +29,28 @@ except Exception as e:
     print(f"❌ Error loading model: {e}")
     exit()
 
-# Normalizer (fit once on the initial data)
+# Normalizer
 scaler = MinMaxScaler()
 
-# AQI Calculation function for individual pollutants
+# AQI Calculation
 def calculate_aqi(concentration, pollutant):
     try:
-        if pollutant == "PM2.5":
-            breakpoints = [(0, 12, 50), (12.1, 35.4, 100), (35.5, 55.4, 150), (55.5, 150.4, 200), (150.5, 250.4, 300), (250.5, 500.4, 400)]
-        elif pollutant == "PM10":
-            breakpoints = [(0, 54, 50), (55, 154, 100), (155, 254, 150), (255, 354, 200), (355, 424, 300), (425, 604, 400)]
-        elif pollutant == "CO":
-            breakpoints = [(0, 4.4, 50), (4.5, 9.4, 100), (9.5, 12.4, 150), (12.5, 15.4, 200), (15.5, 30.4, 300), (30.5, 50, 400)]
-        elif pollutant == "NO2":
-            breakpoints = [(0, 53, 50), (54, 100, 100), (101, 360, 150), (361, 649, 200), (650, 1249, 300), (1250, 2049, 400)]
-        elif pollutant == "O3":
-            breakpoints = [(0, 54, 50), (55, 70, 100), (71, 85, 150), (86, 105, 200), (106, 200, 300), (201, 604, 400)]
-        else:
-            raise ValueError("Invalid pollutant type")
-
-        for low, high, aqi in breakpoints:
+        breakpoints = {
+            "PM2.5": [(0, 12, 50), (12.1, 35.4, 100), (35.5, 55.4, 150), (55.5, 150.4, 200), (150.5, 250.4, 300), (250.5, 500.4, 400)],
+            "PM10": [(0, 54, 50), (55, 154, 100), (155, 254, 150), (255, 354, 200), (355, 424, 300), (425, 604, 400)],
+            "CO": [(0, 4.4, 50), (4.5, 9.4, 100), (9.5, 12.4, 150), (12.5, 15.4, 200), (15.5, 30.4, 300), (30.5, 50, 400)],
+            "NO2": [(0, 53, 50), (54, 100, 100), (101, 360, 150), (361, 649, 200), (650, 1249, 300), (1250, 2049, 400)],
+            "O3": [(0, 54, 50), (55, 70, 100), (71, 85, 150), (86, 105, 200), (106, 200, 300), (201, 604, 400)]
+        }
+        for low, high, aqi in breakpoints.get(pollutant, []):
             if low <= concentration <= high:
                 return aqi
-        return 0  # Return 0 if no valid range was found
+        return 0
     except Exception as e:
         logging.error(f"Error in calculate_aqi for {pollutant}: {e}")
         print(f"❌ Error calculating AQI for {pollutant}: {e}")
         return 0
 
-# Function to send AQI data to ThingSpeak
 def send_aqi_to_thingspeak(sensor_values, overall_aqi):
     try:
         params = {
@@ -66,10 +60,10 @@ def send_aqi_to_thingspeak(sensor_values, overall_aqi):
             'field3': sensor_values['NO2'],
             'field4': sensor_values['CO'],
             'field5': sensor_values['O3'],
-            'field6': overall_aqi  # Only the overall AQI
+            'field6': overall_aqi
         }
         response = requests.post(THINGSPEAK_URL, params=params)
-        response.raise_for_status()  # Raise an exception for bad HTTP status codes
+        response.raise_for_status()
         print("✅ Data sent to ThingSpeak successfully.")
     except requests.exceptions.RequestException as e:
         logging.error(f"Error sending data to ThingSpeak: {e}")
@@ -97,11 +91,10 @@ def predict_realtime():
 
                 print("🔮 Running prediction...")
 
-                # Get the individual AQI values for each pollutant (calculation is done for internal use, not sent)
+                # AQI calculations
                 for pollutant in FEATURES:
                     calculate_aqi(latest_data.iloc[-1][pollutant], pollutant)
 
-                # Assuming model output is a single value (overall AQI)
                 prediction = model.predict(X_input)
 
                 if prediction.shape != (1, 1):
@@ -109,9 +102,26 @@ def predict_realtime():
                 overall_aqi = prediction[0][0]
 
                 print(f"\n🌍 Overall AQI: {overall_aqi}")
-
-                # Send the sensor values and overall AQI to ThingSpeak
                 send_aqi_to_thingspeak(latest_data.iloc[-1], overall_aqi)
+
+                # ✅ Try updating weights if actual AQI label is present
+                if LABEL_COLUMN in df.columns:
+                    train_data = df.dropna(subset=FEATURES + [LABEL_COLUMN]).tail(50)
+                    if not train_data.empty:
+                        X_train = scaler.transform(train_data[FEATURES])
+                        y_train = train_data[LABEL_COLUMN].values
+                        if not np.isnan(X_train).any() and not np.isnan(y_train).any():
+                            model.fit(np.expand_dims(X_train[-SEQUENCE_LENGTH:], axis=0), 
+                                      np.array([y_train[-1]]), 
+                                      epochs=1, verbose=0)
+                            model.save("model.h5")
+                            print("🔁 Model weights updated with latest data.")
+                        else:
+                            print("⚠️ Skipping update: NaNs in training data.")
+                    else:
+                        print("⚠️ Skipping update: Not enough clean data to train.")
+                else:
+                    print("ℹ️ Skipping training: No AQI label column in CSV.")
 
             else:
                 print(f"⏳ Waiting for {SEQUENCE_LENGTH} rows... (currently {len(df)})")
