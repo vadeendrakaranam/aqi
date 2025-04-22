@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Air Quality Data</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f9f9f9;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      color: #004d75;
+      font-size: 36px;
+      margin: 20px 0;
+    }
+    button {
+      background-color: #004d75;
+      color: #fff;
+      padding: 15px 30px;
+      font-size: 16px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #003c5a;
+    }
+    table {
+      width: 80%;
+      margin: 20px 0;
+      border-collapse: collapse;
+      box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
+    }
+    th, td {
+      padding: 15px;
+      text-align: center;
+      border: 1px solid #ddd;
+      font-size: 16px;
+    }
+    th {
+      background-color: #004d75;
+      color: white;
+    }
+    td {
+      background-color: #ffffff;
+    }
+    td:nth-child(even) {
+      background-color: #f2f2f2;
+    }
+    td, th {
+      border-radius: 8px;
+    }
+    #aqiBox {
+      margin-top: 20px;
+      font-size: 24px;
+      font-weight: bold;
+      color: #333;
+      background-color: #ffeb3b;
+      padding: 15px;
+      border-radius: 10px;
+      box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+      text-align: center;
+    }
+    #aqiResults {
+      margin-top: 30px;
+      width: 80%;
+      padding: 20px;
+      background-color: #ffffff;
+      box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
+      border-radius: 10px;
+    }
+    #aqiResults h3 {
+      color: #004d75;
+      margin-bottom: 15px;
+    }
+    p {
+      font-size: 18px;
+      color: #555;
+      margin: 5px 0;
+    }
+    p#totalAQI {
+      font-size: 22px;
+      font-weight: bold;
+    }
+
+    /* Responsive Breakpoints */
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 28px;
+      }
+      button {
+        font-size: 14px;
+        padding: 12px 25px;
+      }
+      table {
+        width: 95%;
+      }
+      th, td {
+        font-size: 14px;
+        padding: 12px;
+      }
+      #aqiBox {
+        font-size: 20px;
+      }
+      #aqiResults {
+        width: 90%;
+      }
+    }
+
+    @media (max-width: 480px) {
+      h1 {
+        font-size: 24px;
+      }
+      button {
+        font-size: 12px;
+        padding: 10px 20px;
+      }
+      table {
+        width: 100%;
+      }
+      th, td {
+        font-size: 12px;
+        padding: 10px;
+      }
+      #aqiBox {
+        font-size: 18px;
+      }
+      #aqiResults {
+        width: 95%;
+        padding: 15px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Live Air Quality Data</h1>
+  <button id="fetchButton">Fetch Live Data</button>
+
+  <table id="sensorDataTable">
+    <tr>
+      <th>Timestamp</th>
+      <th>PM2.5 (µg/m³)</th>
+      <th>PM10 (µg/m³)</th>
+      <th>NO₂ (µg/m³)</th>
+      <th>CO (mg/m³)</th>
+      <th>O₃ (µg/m³)</th>
+      <th>Total AQI</th>
+    </tr>
+    <tr id="data-row">
+      <td colspan="7">Click the button to load data...</td>
+    </tr>
+  </table>
+
+  <div id="aqiBox">
+    <p>Status: <span id="aqiValue">Loading...</span></p>
+  </div>
+
+  <script>
+    const channelID = "2926775";
+    const readAPIKey = "DDOUTA4ZTSFQI9TM"; // leave "" if public
+    const url = `https://api.thingspeak.com/channels/${channelID}/feeds.json?results=1${readAPIKey ? "&api_key=" + readAPIKey : ""}`;
+
+    document.getElementById("fetchButton").addEventListener("click", function() {
+      fetch(url)
+        .then(res => res.json())
+        .then(data => {
+          const feed = data.feeds[0];
+          const pm25 = parseFloat(feed.field1);
+          const pm10 = parseFloat(feed.field2);
+          const no2 = parseFloat(feed.field3);
+          const co = parseFloat(feed.field4);
+          const o3 = parseFloat(feed.field5);
+          const totalAQI = parseFloat(feed.field6);  // Assuming field6 contains the Total AQI value
+          const time = feed.created_at.replace("T", " ").replace("Z", "");
+
+          // Fill table with live data from ThingSpeak
+          const row = `
+            <td>${time}</td>
+            <td>${pm25}</td>
+            <td>${pm10}</td>
+            <td>${no2}</td>
+            <td>${co}</td>
+            <td>${o3}</td>
+            <td>${totalAQI.toFixed(2)}</td>  <!-- Direct Total AQI from feed -->
+          `;
+          document.getElementById("data-row").innerHTML = row;
+
+          // Set AQI based on total AQI value
+          const aqiStatus = getAQIStatus(totalAQI);
+          document.getElementById("aqiValue").innerText = `${aqiStatus.status} (${totalAQI.toFixed(2)})`;
+          document.getElementById("aqiBox").style.backgroundColor = aqiStatus.color;
+        })
+        .catch(error => {
+          console.error("Error fetching data:", error);
+        });
+    });
+
+    // Function to determine the AQI status and color
+    function getAQIStatus(aqi) {
+      if (aqi <= 50) return { status: "Good", color: '#4CAF50' };       // Good
+      if (aqi <= 100) return { status: "Moderate", color: '#FFEB3B' };      // Moderate
+      if (aqi <= 150) return { status: "Unhealthy for sensitive groups", color: '#FF9800' };      // Unhealthy for sensitive groups
+      if (aqi <= 200) return { status: "Unhealthy", color: '#F44336' };      // Unhealthy
+      if (aqi <= 300) return { status: "Very Unhealthy", color: '#9C27B0' };      // Very Unhealthy
+      return { status: "Hazardous", color: '#B71C1C' };                      // Hazardous
+    }
+  </script>
+</body>
+</html>
