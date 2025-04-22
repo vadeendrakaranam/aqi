@@ -76,12 +76,14 @@ def predict_realtime():
             if not os.path.exists(CSV_PATH):
                 raise FileNotFoundError(f"The CSV file at {CSV_PATH} does not exist.")
             
-            # Read CSV and ensure there are no missing values in the necessary columns
-            df = pd.read_csv(CSV_PATH)
-            print(f"\n📥 Loaded {len(df)} rows.")
+            df = pd.read_csv(CSV_PATH, usecols=FEATURES + ['Timestamp'])
 
-            # Drop rows with NaN values in the required features
-            df.dropna(subset=FEATURES, inplace=True)
+            # Exclude the 'Timestamp' column
+            print(df.columns)
+            df.columns = df.columns.str.strip()
+            df = df.drop(columns=['Timestamp'])
+
+            print(f"\n📥 Loaded {len(df)} rows.")
 
             if len(df) >= SEQUENCE_LENGTH:
                 latest_data = df[FEATURES].tail(SEQUENCE_LENGTH)
@@ -90,18 +92,17 @@ def predict_realtime():
                     scaler.fit(latest_data)
                     first_run = False
 
-                # Ensure that the scaling operation is valid (i.e., no NaN values after scaling)
                 scaled = scaler.transform(latest_data)
-                if np.isnan(scaled).any():
-                    raise ValueError("Scaled data contains NaN values.")
-
                 X_input = np.expand_dims(scaled, axis=0)
 
                 print("🔮 Running prediction...")
 
-                # AQI calculations for each pollutant
+                # AQI calculations
+                aqi_values = {}
                 for pollutant in FEATURES:
-                    calculate_aqi(latest_data.iloc[-1][pollutant], pollutant)
+                    aqi_values[pollutant] = calculate_aqi(latest_data.iloc[-1][pollutant], pollutant)
+
+                print(f"AQI values: {aqi_values}")
 
                 prediction = model.predict(X_input)
 
@@ -110,9 +111,11 @@ def predict_realtime():
                 overall_aqi = prediction[0][0]
 
                 print(f"\n🌍 Overall AQI: {overall_aqi}")
+
+                # Send AQI to ThingSpeak
                 send_aqi_to_thingspeak(latest_data.iloc[-1], overall_aqi)
 
-                # Try updating model weights if actual AQI label is present
+                # Update model if actual AQI label is present
                 if LABEL_COLUMN in df.columns:
                     train_data = df.dropna(subset=FEATURES + [LABEL_COLUMN]).tail(50)
                     if not train_data.empty:
