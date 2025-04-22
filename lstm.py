@@ -5,6 +5,8 @@ import time
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow import keras
 import requests
+import logging
+import os
 
 # === Settings ===
 CSV_PATH = 'livedata.csv'
@@ -13,55 +15,75 @@ FEATURES = ['PM2.5', 'PM10', 'NO2', 'CO', 'O3']
 THINGSPEAK_API_KEY = '3K3DQZMFW585P1U0'
 THINGSPEAK_URL = 'https://api.thingspeak.com/update.json'
 
-# Load model
-model = keras.models.load_model('model.h5', compile=False)
+# Logging setup for better error tracking
+logging.basicConfig(filename="error_log.txt", level=logging.ERROR, 
+                    format="%(asctime)s - %(levelname)s - %(message)s")
+
+# Load model with error handling
+try:
+    model = keras.models.load_model('model.h5', compile=False)
+    print("✅ Model loaded successfully.")
+except Exception as e:
+    logging.error(f"Error loading model: {e}")
+    print(f"❌ Error loading model: {e}")
+    exit()
 
 # Normalizer (fit once on the initial data)
 scaler = MinMaxScaler()
 
 # AQI Calculation function
 def calculate_aqi(concentration, pollutant):
-    if pollutant == "PM2.5":
-        breakpoints = [(0, 12, 50), (12.1, 35.4, 100), (35.5, 55.4, 150), (55.5, 150.4, 200), (150.5, 250.4, 300), (250.5, 500.4, 400)]
-    elif pollutant == "PM10":
-        breakpoints = [(0, 54, 50), (55, 154, 100), (155, 254, 150), (255, 354, 200), (355, 424, 300), (425, 604, 400)]
-    elif pollutant == "CO":
-        breakpoints = [(0, 4.4, 50), (4.5, 9.4, 100), (9.5, 12.4, 150), (12.5, 15.4, 200), (15.5, 30.4, 300), (30.5, 50, 400)]
-    elif pollutant == "NO2":
-        breakpoints = [(0, 53, 50), (54, 100, 100), (101, 360, 150), (361, 649, 200), (650, 1249, 300), (1250, 2049, 400)]
-    elif pollutant == "O3":
-        breakpoints = [(0, 54, 50), (55, 70, 100), (71, 85, 150), (86, 105, 200), (106, 200, 300), (201, 604, 400)]
-    else:
-        return 0
+    try:
+        if pollutant == "PM2.5":
+            breakpoints = [(0, 12, 50), (12.1, 35.4, 100), (35.5, 55.4, 150), (55.5, 150.4, 200), (150.5, 250.4, 300), (250.5, 500.4, 400)]
+        elif pollutant == "PM10":
+            breakpoints = [(0, 54, 50), (55, 154, 100), (155, 254, 150), (255, 354, 200), (355, 424, 300), (425, 604, 400)]
+        elif pollutant == "CO":
+            breakpoints = [(0, 4.4, 50), (4.5, 9.4, 100), (9.5, 12.4, 150), (12.5, 15.4, 200), (15.5, 30.4, 300), (30.5, 50, 400)]
+        elif pollutant == "NO2":
+            breakpoints = [(0, 53, 50), (54, 100, 100), (101, 360, 150), (361, 649, 200), (650, 1249, 300), (1250, 2049, 400)]
+        elif pollutant == "O3":
+            breakpoints = [(0, 54, 50), (55, 70, 100), (71, 85, 150), (86, 105, 200), (106, 200, 300), (201, 604, 400)]
+        else:
+            raise ValueError("Invalid pollutant type")
 
-    for low, high, aqi in breakpoints:
-        if low <= concentration <= high:
-            return aqi
-    return 0
+        for low, high, aqi in breakpoints:
+            if low <= concentration <= high:
+                return aqi
+        return 0  # Return 0 if no valid range was found
+    except Exception as e:
+        logging.error(f"Error in calculate_aqi for {pollutant}: {e}")
+        print(f"❌ Error calculating AQI for {pollutant}: {e}")
+        return 0
 
 def calculate_total_aqi(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi):
     return max(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi)
 
 def send_aqi_to_thingspeak(pm25_aqi, pm10_aqi, co_aqi, no2_aqi, o3_aqi, total_aqi):
-    params = {
-        'api_key': THINGSPEAK_API_KEY,
-        'field1': pm25_aqi,
-        'field2': pm10_aqi,
-        'field3': co_aqi,
-        'field4': no2_aqi,
-        'field5': o3_aqi,
-        'field6': total_aqi
-    }
-    response = requests.post(THINGSPEAK_URL, params=params)
-    if response.status_code == 200:
+    try:
+        params = {
+            'api_key': THINGSPEAK_API_KEY,
+            'field1': pm25_aqi,
+            'field2': pm10_aqi,
+            'field3': co_aqi,
+            'field4': no2_aqi,
+            'field5': o3_aqi,
+            'field6': total_aqi
+        }
+        response = requests.post(THINGSPEAK_URL, params=params)
+        response.raise_for_status()  # Raise an exception for bad HTTP status codes
         print("✅ Data sent to ThingSpeak successfully.")
-    else:
-        print(f"❌ Failed to send data to ThingSpeak. Status Code: {response.status_code}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error sending data to ThingSpeak: {e}")
+        print(f"❌ Failed to send data to ThingSpeak. Error: {e}")
 
 def predict_realtime():
     first_run = True
     while True:
         try:
+            if not os.path.exists(CSV_PATH):
+                raise FileNotFoundError(f"The CSV file at {CSV_PATH} does not exist.")
+
             df = pd.read_csv(CSV_PATH)
             print(f"\n📥 Loaded {len(df)} rows.")
 
@@ -77,6 +99,10 @@ def predict_realtime():
 
                 print("🔮 Running prediction...")
                 prediction = model.predict(X_input)
+
+                # Check prediction shape before unpacking
+                if prediction.shape[1] != 5:
+                    raise ValueError(f"Expected 5 output values from the model, but got {prediction.shape[1]}.")
                 pred = prediction[0]
 
                 pm25_pred, pm10_pred, co_pred, no2_pred, o3_pred = pred
@@ -111,6 +137,7 @@ def predict_realtime():
                 print(f"⏳ Waiting for {SEQUENCE_LENGTH} rows... (currently {len(df)})")
 
         except Exception as e:
+            logging.error(f"Error in prediction loop: {e}")
             print(f"❌ Error: {e}")
 
         time.sleep(10)
